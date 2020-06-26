@@ -82,6 +82,7 @@ library
                      , iproute
                      , safe-exceptions
                      , scientific
+                     , serialise
                      , shelley-spec-ledger
                      , string-conv
                      , stm

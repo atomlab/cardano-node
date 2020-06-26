@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -11,14 +12,20 @@ module Cardano.Config.Orphanage () where
 import           Cardano.Prelude
 import qualified Prelude
 
+import           Codec.Serialise (Serialise, serialise)
 import           Data.Aeson
-import           Network.Socket (PortNumber)
+import qualified Data.ByteString.Base16 as Base16
+import qualified Data.ByteString.Lazy as LBS
 import           Data.Scientific (coefficient)
 import qualified Data.Text as Text
+import qualified Data.Text.Encoding as Text
+import           Network.Socket (PortNumber)
 
 import           Cardano.BM.Data.Tracer (TracingVerbosity(..))
 import qualified Cardano.Chain.Update as Update
+import           Cardano.Slotting.Block (BlockNo (..))
 import           Ouroboros.Consensus.NodeId (CoreNodeId (..))
+import           Ouroboros.Network.Block (HeaderHash, Tip (..))
 
 
 deriving instance Show TracingVerbosity
@@ -50,3 +57,13 @@ instance FromJSON Update.ApplicationName where
   parseJSON invalid  =
     panic $ "Parsing of application name failed due to type mismatch. "
     <> "Encountered: " <> (Text.pack $ Prelude.show invalid)
+
+instance Serialise (HeaderHash blk) => ToJSON (Tip blk) where
+  toJSON TipGenesis = object [ "genesis" .= True ]
+  toJSON (Tip slotNo headerHash (BlockNo bn)) =
+    object
+      [ "slotNo" .= slotNo
+      , "headerHash" .=
+          (Text.decodeLatin1 . Base16.encode . LBS.toStrict . serialise) headerHash
+      , "blockNo" .= bn
+      ]
