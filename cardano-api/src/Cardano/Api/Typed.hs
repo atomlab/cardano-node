@@ -173,6 +173,15 @@ module Cardano.Api.Typed (
     serialiseToJSON,
     deserialiseFromJSON,
 
+    -- ** Bech32
+    SerialiseAsBech32,
+    Bech32EncodeError(..),
+    Bech32DecodeError(..),
+    serialiseToBech32,
+    deserialiseFromBech32,
+    renderBech32EncodeError,
+    renderBech32DecodeError,
+
     -- ** Raw binary
     -- | Some types have a natural raw binary format.
     SerialiseAsRawBytes,
@@ -277,8 +286,8 @@ import           Data.List as List
 import qualified Data.List.NonEmpty as NonEmpty
 --import           Data.Either
 import           Data.String (IsString(fromString))
-import qualified Data.Text as Text
 import           Data.Text (Text)
+import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
 import           Numeric.Natural
 
@@ -297,6 +306,8 @@ import qualified Data.Map.Strict as Map
 import           Data.Map.Strict (Map)
 import qualified Data.Sequence.Strict as Seq
 import qualified Data.Vector as Vector
+
+import qualified Codec.Binary.Bech32 as Bech32
 
 import           Control.Monad
 --import Control.Monad.IO.Class
@@ -621,6 +632,34 @@ instance SerialiseAsRawBytes StakeAddress where
         case Shelley.deserialiseRewardAcnt bs of
           Nothing -> Nothing
           Just (Shelley.RewardAcnt nw sc) -> Just (StakeAddress nw sc)
+
+
+instance SerialiseAsBech32 (Address Shelley) where
+  humanReadablePrefix (ByronAddress _) =
+    error "TODO"
+  humanReadablePrefix (ShelleyAddress nw _ _) =
+      case Bech32.humanReadablePartFromText prefix of
+        Left err -> error $ "Impossible: " <> show err
+        Right hrp -> hrp
+    where
+      prefix :: Text
+      prefix =
+        case nw of
+          Shelley.Mainnet -> "addr_"
+          Shelley.Testnet -> "addr_test_"
+
+
+instance SerialiseAsBech32 StakeAddress where
+  humanReadablePrefix (StakeAddress nw _ ) =
+    case Bech32.humanReadablePartFromText prefix of
+      Left err -> error $ "Impossible: " <> show err
+      Right hrp -> hrp
+    where
+      prefix :: Text
+      prefix =
+        case nw of
+          Shelley.Mainnet -> "stake_"
+          Shelley.Testnet -> "stake_test_"
 
 
 makeByronAddress :: VerificationKey ByronKey
@@ -2210,6 +2249,110 @@ deserialiseFromRawBytesHex proxy hex =
       | BS.null trailing -> deserialiseFromRawBytes proxy raw
       | otherwise        -> Nothing
 
+
+-- ----------------------------------------------------------------------------
+-- Bech32 Serialisation
+--
+
+class (HasTypeProxy a, SerialiseAsRawBytes a) => SerialiseAsBech32 a where
+  humanReadablePrefix :: a -> Bech32.HumanReadablePart
+
+  serialiseToBech32 :: a -> Either Bech32EncodeError Text
+  serialiseToBech32 a =
+    first Bech32EncodingError
+      . Bech32.encode (humanReadablePrefix a)
+      . Bech32.dataPartFromBytes
+      . serialiseToRawBytes
+      $ a
+
+  deserialiseFromBech32 :: AsType a -> Text -> Either Bech32DecodeError a
+  deserialiseFromBech32 asType bech32Str =
+      case Bech32.decode bech32Str of
+        Left decErr -> Left (Bech32DecodingError decErr)
+        Right (humanReadablePart, dataPart) ->
+          case deserialiseFromDataPartBytes dataPart tryDeserialise of
+            Left err -> Left err
+            Right res -> validatePrefix humanReadablePart res
+    where
+      deserialiseFromDataPartBytes
+        :: Bech32.DataPart
+        -> (ByteString -> Either Bech32DecodeError b)
+        -> Either Bech32DecodeError b
+      deserialiseFromDataPartBytes dp deserialise =
+        maybe
+          (Left $ Bech32DataPartToBytesError $ Bech32.dataPartToText dp)
+          deserialise
+          (Bech32.dataPartToBytes dp)
+
+      tryDeserialise :: ByteString -> Either Bech32DecodeError a
+      tryDeserialise bs =
+        maybe
+          (Left $ Bech32DeserialiseFromBytesError bs)
+          Right
+          (deserialiseFromRawBytes asType bs)
+
+      validatePrefix
+        :: Bech32.HumanReadablePart
+        -> a
+        -> Either Bech32DecodeError a
+      validatePrefix actualHrp a = do
+        let expected = Bech32.humanReadablePartToText (humanReadablePrefix a)
+            actual = Bech32.humanReadablePartToText actualHrp
+        if expected == actual
+          then Right a
+          else Left (Bech32IncorrectHumanReadablePrefixError expected actual)
+
+-- | Bech32 encoding error.
+data Bech32EncodeError
+  = Bech32EncodingError !Bech32.EncodingError
+    -- ^ There was an error encoding the string as Bech32.
+  deriving Show
+
+-- | Render a 'Bech32EncodeError' as a human-readable error message.
+renderBech32EncodeError :: Bech32EncodeError -> Text
+renderBech32EncodeError (Bech32EncodingError Bech32.EncodedStringTooLong) =
+  "Failed to encode the Bech32 string as the resulting string would be too long."
+
+-- | Bech32 decoding error.
+data Bech32DecodeError
+  = Bech32DecodingError !Bech32.DecodingError
+    -- ^ There was an error decoding the string as Bech32.
+  | Bech32IncorrectHumanReadablePrefixError
+    -- ^ The human-readable prefix in the provided Bech32-encoded string
+    -- differs from that which was expected.
+      !Text
+      -- ^ Expected human-readable prefix.
+      !Text
+      -- ^ Actual human-readable prefix.
+  | Bech32DataPartToBytesError
+    -- ^ There was an error in extracting a 'ByteString' from the data part of
+    -- the Bech32-encoded string.
+      !Text
+      -- ^ The data part from which a 'ByteString' could not be extracted.
+  | Bech32DeserialiseFromBytesError
+    -- ^ There was an error in deserialising the bytes into a value of the
+    -- expected type.
+      !ByteString
+      -- ^ The bytes that could not be deserialised.
+  deriving Show
+
+-- | Render a 'Bech32DecodeError' as a human-readable error message.
+renderBech32DecodeError :: Bech32DecodeError -> Text
+renderBech32DecodeError err =
+  case err of
+    Bech32DecodingError decErr -> Text.pack (show decErr) -- TODO
+    Bech32IncorrectHumanReadablePrefixError expected actual ->
+      "Expected a human-readable prefix of \""
+        <> expected
+        <> "\", but the actual prefix is \""
+        <> actual
+        <> "\"."
+    Bech32DataPartToBytesError _dataPart ->
+      "There was an error in extracting the bytes from the data part of the \
+      \Bech32-encoded string."
+    Bech32DeserialiseFromBytesError _bytes ->
+      "There was an error in deserialising the data part of the \
+      \Bech32-encoded string into a value of the expected type."
 
 -- ----------------------------------------------------------------------------
 -- TextEnvelope Serialisation
