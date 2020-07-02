@@ -7,8 +7,8 @@ module Cardano.CLI.Shelley.Run.StakeAddress
 
 import           Cardano.Prelude
 
-import qualified Data.ByteString.Lazy.Char8 as LBS
 import qualified Data.Text as Text
+import qualified Data.Text.IO as Text
 
 import           Control.Monad.Trans.Except (ExceptT)
 import           Control.Monad.Trans.Except.Extra (firstExceptT, hoistEither, left, newExceptT)
@@ -18,14 +18,14 @@ import           Cardano.Api (ApiError, Network (..), SigningKey (..),
                    writeSigningKey, writeStakingVerificationKey)
 import           Cardano.Api.TextView (TextViewTitle (..), textShow)
 import qualified Cardano.Api.Typed as Api (NetworkId (..))
-import           Cardano.Api.Typed (AsType (..), Error (..), FileError,
-                   Key (..), StakeCredential (..), TextEnvelopeError,
-                   generateSigningKey, getVerificationKey, makeStakeAddress,
-                   makeStakeAddressDelegationCertificate,
+import           Cardano.Api.Typed (AsType (..), Bech32EncodeError,
+                   Error (..), FileError, Key (..), StakeCredential (..),
+                   TextEnvelopeError, generateSigningKey, getVerificationKey,
+                   makeStakeAddress, makeStakeAddressDelegationCertificate,
                    makeStakeAddressDeregistrationCertificate,
                    makeStakeAddressRegistrationCertificate,
-                   readFileTextEnvelope, serialiseToRawBytesHex,
-                   writeFileTextEnvelope)
+                   readFileTextEnvelope, renderBech32EncodeError,
+                   serialiseToBech32, writeFileTextEnvelope)
 
 import qualified Cardano.Crypto.DSIGN as DSIGN
 
@@ -43,6 +43,7 @@ data ShelleyStakeAddressCmdError
       -- ^ bech32 public key
   | ShelleyStakeAddressWriteSignKeyError !FilePath !ApiError
   | ShelleyStakeAddressWriteVerKeyError !FilePath !ApiError
+  | ShelleyStakeAddressBech32EncodeError !Bech32EncodeError
   | ShelleyStakeAddressReadFileError !(FileError TextEnvelopeError)
   | ShelleyStakeAddressWriteFileError !(FileError ())
   deriving Show
@@ -58,6 +59,7 @@ renderShelleyStakeAddressCmdError err =
     ShelleyStakeAddressKeyPairError bech32PrivKey bech32PubKey ->
       "Error while deriving the shelley verification key from bech32 private Key: " <> bech32PrivKey <>
       " Corresponding bech32 public key: " <> bech32PubKey
+    ShelleyStakeAddressBech32EncodeError encErr -> renderBech32EncodeError encErr
     ShelleyStakeAddressReadFileError fileErr -> Text.pack (displayError fileErr)
     ShelleyStakeAddressWriteFileError fileErr -> Text.pack (displayError fileErr)
 
@@ -103,11 +105,14 @@ runStakeAddressBuild (VerificationKeyFile stkVkeyFp) network mOutputFp = do
 
     let stakeCred = StakeCredentialByKey (verificationKeyHash stakeVerKey)
         rwdAddr = makeStakeAddress nwId stakeCred
-        hexAddr = LBS.fromStrict (serialiseToRawBytesHex rwdAddr)
+
+    bech32Addr <- firstExceptT ShelleyStakeAddressBech32EncodeError
+      . hoistEither
+      $ serialiseToBech32 rwdAddr
 
     case mOutputFp of
-      Just (OutputFile fpath) -> liftIO $ LBS.writeFile fpath hexAddr
-      Nothing -> liftIO $ LBS.putStrLn hexAddr
+      Just (OutputFile fpath) -> liftIO $ Text.writeFile fpath bech32Addr
+      Nothing -> liftIO $ Text.putStrLn bech32Addr
   where
     -- TODO: Remove this once we remove usage of 'Cardano.Api.Types.Network'
     --       from this module.

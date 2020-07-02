@@ -41,6 +41,7 @@ runAddressInfo addrTxt = do
     | Text.all isBase58Char addrTxt -> do
         liftIO $ putStrLn "Encoding: Base58"
         runAddressInfoBase58 addrTxt
+    -- TODO: Add Bech32 support.
     | otherwise -> left $ ShelleyAddressDescribeError ("Unknown address type: " <> addrTxt)
   where
     isBase58Char :: Char -> Bool
