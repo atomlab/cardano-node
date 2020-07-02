@@ -1,5 +1,6 @@
 module Cardano.CLI.Shelley.Run.Node
-  ( ShelleyNodeCmdError
+  ( BlockIssuerKey(..)
+  , ShelleyNodeCmdError
   , renderShelleyNodeCmdError
   , runNodeCmd
   ) where
@@ -11,12 +12,13 @@ import           Control.Monad.Trans.Except.Extra (firstExceptT, hoistEither, ne
 
 import qualified Data.Text as Text
 
-import           Cardano.Api.Typed (AsType (..), Error (..), FileError,
+import           Cardano.Api.Typed (AsType (..), BlockIssuerKey(..),
+                   Error (..), FileError, FromSomeType(..), HasTextEnvelope,
                    KESPeriod, OperationalCertificateIssueCounter (..),
                    OperationalCertIssueError, TextEnvelopeError,
                    generateSigningKey, getVerificationKey,
-                   issueOperationalCertificate, readFileTextEnvelope,
-                   writeFileTextEnvelope)
+                   issueOperationalCertificate, readFileTextEnvelopeAnyOf,
+                   readFileTextEnvelope, writeFileTextEnvelope)
 
 import           Cardano.Api.TextView (TextViewTitle (..))
 import           Cardano.Config.Types (SigningKeyFile(..))
@@ -141,16 +143,16 @@ runNodeIssueOpCert (VerificationKeyFile vkeyKesPath)
       . newExceptT
       $ readFileTextEnvelope (AsVerificationKey AsKesKey) vkeyKesPath
 
-    signKeyStakePool <- firstExceptT ShelleyNodeReadFileError
+    signKey <- firstExceptT ShelleyNodeReadFileError
       . newExceptT
-      $ readFileTextEnvelope (AsSigningKey AsStakePoolKey) skeyStakePoolPath
+      $ readFileTextEnvelopeAnyOf possibleBlockIssuers skeyStakePoolPath
 
     (ocert, nextOcertCtr) <-
       firstExceptT ShelleyNodeOperationalCertificateIssueError
         . hoistEither
         $ issueOperationalCertificate
             verKeyKes
-            signKeyStakePool
+            signKey
             kesPeriod
             ocertIssueCounter
 
@@ -172,3 +174,8 @@ runNodeIssueOpCert (VerificationKeyFile vkeyKesPath)
 
     ocertCtrDesc :: Natural -> TextViewTitle
     ocertCtrDesc n = TextViewTitle $ "Next certificate issue number: " <> show n
+
+    possibleBlockIssuers :: [FromSomeType HasTextEnvelope BlockIssuerKey]
+    possibleBlockIssuers = [ FromSomeType (AsSigningKey AsStakePoolKey) StakePoolBlockIssuer
+                           , FromSomeType (AsSigningKey AsGenesisDelegateKey) GenesisDelegateBlockIssuer
+                           ]
