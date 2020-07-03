@@ -34,6 +34,7 @@ module Cardano.Api.TextView
 
 import           Cardano.Prelude
 
+import           Data.Aeson (ToJSON(..), object, (.=))
 import           Data.Attoparsec.ByteString (Parser)
 import qualified Data.Attoparsec.ByteString.Char8 as Atto
 import qualified Data.ByteString.Base16 as Base16
@@ -72,6 +73,13 @@ data TextView = TextView
   , tvTitle :: !TextViewTitle
   , tvRawCBOR :: !ByteString
   } deriving (Eq, Show)
+
+instance ToJSON TextView where
+  toJSON (TextView (TextViewType tvType) (TextViewTitle title) rawCBOR) =
+    object [ "type" .= (Text.decodeUtf8 $ Base16.encode tvType)
+           , "title" .= (Text.decodeUtf8 $ Base16.encode title)
+           , "cbor-hex" .= (Text.decodeUtf8 $ Base16.encode rawCBOR)
+           ]
 
 -- | The errors that the pure 'TextView' parsing\/decoding functions can return.
 --
