@@ -48,7 +48,7 @@ golden_shelleyTx =
       createdFiles
         $ evalCardanoCLIParser [ "shelley","transaction", "build-raw"
                                , "--tx-in", "91999ea21177b33ebe6b8690724a0c026d410a11ad7521caa350abdafa5394c3#0"
-                               , "--tx-out", "615dbe1e2117641f8d618034b801a870ca731ce758c3bedd5c7e4429c103149804+100000000"
+                               , "--tx-out", "addr_1vy02dvgujpt607hct2n08kv9qmh72htcrskvka7p4mr8tdgx0qgl7+100000000"
                                , "--fee", "1000000"
                                , "--ttl", "500000"
                                , "--out-file", transactionBodyFile
